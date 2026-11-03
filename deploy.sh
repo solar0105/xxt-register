@@ -191,11 +191,19 @@ else
   KEEP_DATA=0
 fi
 
-for item in server.js routes lib public test; do
-  run "$SUDO rm -rf $APP_DIR/$item"
-  run "$SUDO cp -a ./$item $APP_DIR/"
-done
-run "$SUDO cp -a ./README.md $APP_DIR/ 2>/dev/null || true"
+# 如果脚本本身就跑在 $APP_DIR 里（比如 git clone 到 /opt/cx-sign 后直接执行），
+# 绝不能 rm -rf 再 cp —— 那会先把源文件删掉，然后无文件可拷。
+SRC_DIR="$(cd "$(dirname "$0")" && pwd)"
+APP_DIR_REAL="$(readlink -f "$APP_DIR" 2>/dev/null || printf '%s' "$APP_DIR")"
+if [ "$SRC_DIR" = "$APP_DIR_REAL" ]; then
+  info "脚本已在 $APP_DIR 内运行，原地安装，跳过复制"
+else
+  for item in server.js routes lib public test; do
+    run "$SUDO rm -rf $APP_DIR/$item"
+    run "$SUDO cp -a ./$item $APP_DIR/"
+  done
+  run "$SUDO cp -a ./README.md $APP_DIR/ 2>/dev/null || true"
+fi
 [ "$KEEP_DATA" -eq 1 ] && run "$SUDO mkdir -p $APP_DIR/data"
 ok "文件已就位"
 
