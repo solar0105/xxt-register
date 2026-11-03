@@ -1,0 +1,19 @@
+{
+  "name": "学习通签到助手",
+  "short_name": "签到助手",
+  "description": "学习通位置/人脸签到与定时自动签到",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0e1015",
+  "theme_color": "#0e1015",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

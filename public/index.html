@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1,user-scalable=no">
+<meta name="theme-color" content="#0e1015">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>学习通签到助手</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/vendor/leaflet.css">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="dot" id="brandDot"></span>
+    <b>学习通签到助手</b>
+  </div>
+  <div class="user" id="userBox">
+    <span class="muted">未登录</span>
+  </div>
+</header>
+
+<main id="view"></main>
+
+<nav class="tabbar">
+  <button data-tab="sign"    class="tab active"><i>✓</i><span>签到</span></button>
+  <button data-tab="courses" class="tab"><i>▤</i><span>课程</span></button>
+  <button data-tab="places"  class="tab"><i>◎</i><span>地点</span></button>
+  <button data-tab="face"    class="tab"><i>☺</i><span>人脸</span></button>
+  <button data-tab="plans"   class="tab"><i>◷</i><span>计划</span></button>
+</nav>
+
+<div id="toast" class="toast"></div>
+
+<script src="/app.js" defer></script>
+</body>
+</html>

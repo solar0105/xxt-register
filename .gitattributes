@@ -1,0 +1,17 @@
+# 统一换行符，避免 .sh 到 Linux 上变成 CRLF 后报 bad interpreter
+* text=auto eol=lf
+
+# shell 脚本必须 LF
+*.sh    text eol=lf
+Dockerfile text eol=lf
+
+# Windows 批处理必须 CRLF
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# 二进制，别做任何转换
+*.png   binary
+*.jpg   binary
+*.gz    binary
+*.zip   binary
+*.woff2 binary

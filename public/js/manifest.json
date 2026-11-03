@@ -1,0 +1,14 @@
+{
+  "files": [
+    "10-base.js",
+    "20-core.js",
+    "30-view-sign.js",
+    "31-view-courses.js",
+    "32-view-places.js",
+    "33-view-face.js",
+    "34-view-plans.js",
+    "35-phone-card.js",
+    "40-actions.js",
+    "50-boot.js"
+  ]
+}
