@@ -204,7 +204,9 @@ else
   done
   run "$SUDO cp -a ./README.md $APP_DIR/ 2>/dev/null || true"
 fi
-[ "$KEEP_DATA" -eq 1 ] && run "$SUDO mkdir -p $APP_DIR/data"
+# data 目录必须无条件存在：systemd 单元里的 ReadWritePaths 指向不存在的路径，
+# 会导致 ProtectSystem=strict 建不了命名空间，服务起不来（日志里连 node 的报错都没有）
+run "$SUDO mkdir -p $APP_DIR/data"
 ok "文件已就位"
 
 run "$SUDO chown -R $RUN_USER:$RUN_USER $APP_DIR"
