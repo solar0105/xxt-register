@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('node:crypto');
 /** 常用地点 */
 
 

@@ -1,4 +1,5 @@
 'use strict';
+const crypto = require('node:crypto');
 /** 定时计划与自动签到开关 */
 
 

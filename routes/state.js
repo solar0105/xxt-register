@@ -10,6 +10,7 @@ route('GET', '/api/state', async () => {
   const s = sess.get();
   writeAddressFile(PORT);
   return {
+    me: { id: store.currentUid(), label: (s && s.user && s.user.name) || null },
     loggedIn: !!(s && s.loggedIn),
     user:
       s && s.user
