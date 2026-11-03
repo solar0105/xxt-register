@@ -89,12 +89,18 @@ const server = http.createServer(async (req, res) => {
         sendJSON(res, 401, { error: '需要注册口令', needPin: true });
         return;
       }
+      const tried = url.searchParams.has('pin');
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
       res.end(
         '<!doctype html><meta charset="utf-8"><title>需要口令</title>' +
+          '<meta name="viewport" content="width=device-width,initial-scale=1">' +
           '<body style="font:16px system-ui;padding:24px;background:#0f1115;color:#e6e6e6">' +
-          '<h3>输入访问口令</h3><form method="get">口令：<input name="pin" autofocus>' +
-          '<button>进入</button></form>' +
+          '<h3>输入访问口令</h3>' +
+          (tried
+            ? '<p style="color:#e06c75;margin:0 0 12px">口令不对，再试一次</p>'
+            : '') +
+          '<form method="get">口令：<input name="pin" autofocus autocapitalize="off" ' +
+          'autocorrect="off" spellcheck="false"><button>进入</button></form>' +
           '<p style="color:#888">口令用来挡住陌生人创建账号。输一次记住一年。</p></body>',
       );
       return;
