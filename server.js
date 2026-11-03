@@ -100,8 +100,7 @@ const server = http.createServer(async (req, res) => {
             ? '<p style="color:#e06c75;margin:0 0 12px">口令不对，再试一次</p>'
             : '') +
           '<form method="get">口令：<input name="pin" autofocus autocapitalize="off" ' +
-          'autocorrect="off" spellcheck="false"><button>进入</button></form>' +
-          '<p style="color:#888">口令用来挡住陌生人创建账号。输一次记住一年。</p></body>',
+          'autocorrect="off" spellcheck="false"><button>进入</button></form></body>',
       );
       return;
     }
