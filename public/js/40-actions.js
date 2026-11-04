@@ -20,6 +20,13 @@ function bind() {
     };
   });
 
+  const placeSel = $('#placeSel');
+  if (placeSel) {
+    placeSel.onchange = () => {
+      S.placeId = placeSel.value;
+    };
+  }
+
   const datumSel = $('#pDatum');
   if (datumSel) {
     datumSel.value = S.datum;
@@ -207,7 +214,7 @@ const ACTIONS = {
     const st = S.state;
     if (!st.places.length) return toast('请先添加一个签到地点', 'bad');
     const r = await api('/api/sign/smart', {
-      body: { input, placeId: st.places[0].id, useFace: true },
+      body: { input, placeId: currentPlaceId(), useFace: true },
     });
     await handleSignResult(r);
   },
@@ -216,7 +223,7 @@ const ACTIONS = {
     const st = S.state;
     if (!st.places.length) return toast('请先添加一个签到地点', 'bad');
     const r = await api('/api/sign/smart', {
-      body: { activeId: Number(id), placeId: st.places[0].id, useFace: true },
+      body: { activeId: Number(id), placeId: currentPlaceId(), useFace: true },
     });
     await handleSignResult(r);
   },
@@ -225,7 +232,7 @@ const ACTIONS = {
     const st = S.state;
     if (!st.places.length) return toast('请先添加地点', 'bad');
     const r = await api('/api/sign/auto', {
-      body: { courseId: 0, placeId: st.places[0].id, useFace: true },
+      body: { courseId: 0, placeId: currentPlaceId(), useFace: true },
     });
     toast(r.empty ? '当前没有待签到活动' : `成功 ${r.signed}，失败 ${r.failed}`, r.failed ? 'bad' : 'ok');
     await refresh();

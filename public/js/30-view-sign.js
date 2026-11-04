@@ -73,7 +73,22 @@ function renderSign() {
   const places = st.places || [];
   h += `
   <div class="card">
-    <h3>立即签到 <span class="sub">${places.length ? `默认地点：${esc(places[0].name)}` : '还没有地点'}</span></h3>
+    <h3>立即签到 <span class="sub">${places.length ? '先选地点，再签' : '还没有地点'}</span></h3>
+    ${
+      places.length
+        ? `<label class="field" style="margin:0 0 10px">
+      <span>用哪个地点签到</span>
+      <select id="placeSel">
+        ${places
+          .map((p) => {
+            const on = p.id === currentPlaceId() ? 'selected' : '';
+            return `<option value="${p.id}" ${on}>${esc(p.name)}（${Number(p.lat).toFixed(5)}, ${Number(p.lng).toFixed(5)}）</option>`;
+          })
+          .join('')}
+      </select>
+    </label>`
+        : ''
+    }
     <div class="row">
       <button class="grow" data-act="scan">扫描当前签到</button>
       <button class="grow ok" data-act="sign-all">一键全签</button>

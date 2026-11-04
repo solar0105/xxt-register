@@ -1,0 +1,579 @@
+/*
+ * Copyright (c) 2025-2026, @aquamarine5 (@海蓝色的咕咕鸽). All Rights Reserved.
+ * Author: aquamarine5@163.com (Github: https://github.com/aquamarine5) and Brainspark (previously RenegadeCreation)
+ * Repository: https://github.com/aquamarine5/ChaoxingSignFaker
+ */
+
+package org.aquamarine5.brainspark.chaoxingsignfaker.signer
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.util.Log
+import android.webkit.CookieManager
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import com.alibaba.fastjson2.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.Request
+import okhttp3.Response
+import org.aquamarine5.brainspark.chaoxingsignfaker.api.ChaoxingCourseHelper
+import org.aquamarine5.brainspark.chaoxingsignfaker.api.ChaoxingFaceHelper
+import org.aquamarine5.brainspark.chaoxingsignfaker.api.ChaoxingHttpClient
+import org.aquamarine5.brainspark.chaoxingsignfaker.api.ChaoxingHttpRequester
+import org.aquamarine5.brainspark.chaoxingsignfaker.entity.ChaoxingCaptchaDataEntity
+import org.aquamarine5.brainspark.chaoxingsignfaker.entity.ChaoxingLocationSignEntity
+import org.aquamarine5.brainspark.chaoxingsignfaker.entity.ChaoxingSignActivityStatus
+import org.aquamarine5.brainspark.chaoxingsignfaker.signer.ChaoxingQRCodeSigner.QRCodeExpiredException
+import org.aquamarine5.brainspark.chaoxingsignfaker.utilities.ChaoxingDeviceCodeDuplicatedSignException
+import org.aquamarine5.brainspark.chaoxingsignfaker.utilities.ChaoxingFaceSignException
+import org.aquamarine5.brainspark.chaoxingsignfaker.utilities.ChaoxingParseDataException
+import org.aquamarine5.brainspark.chaoxingsignfaker.utilities.ChaoxingUserSessionOutdatedException
+import org.aquamarine5.brainspark.chaoxingsignfaker.utilities.UMengHelper
+import org.aquamarine5.brainspark.chaoxingsignfaker.utilities.checkResponseThrowException
+import java.util.Locale
+import java.util.UUID
+import kotlin.time.Duration.Companion.seconds
+
+abstract class ChaoxingSigner(
+    val client: ChaoxingHttpRequester,
+    val activeId: Long,
+    val classId: Int,
+    val courseId: Long,
+    val extContent: String,
+    baseSignInfo: JSONObject? = null
+) {
+    companion object {
+        val URL_PERSIGN =
+            "https://mobilelearn.chaoxing.com/newsign/preSign".toHttpUrl()
+        val URL_SIGN_INFO =
+            "https://mobilelearn.chaoxing.com/v2/apis/active/getPPTActiveInfo".toHttpUrl()
+        val URL_ANALYSIS =
+            "https://mobilelearn.chaoxing.com/pptSign/analysis?vs=1&DB_STRATEGY=RANDOM".toHttpUrl()
+        val URL_AFTER_ANALYSIS2 =
+            "https://mobilelearn.chaoxing.com/pptSign/analysis2?DB_STRATEGY=RANDOM".toHttpUrl()
+        val URL_CAPTCHA_CONF =
+            "https://captcha.chaoxing.com/captcha/get/conf?callback=cx_captcha_function".toHttpUrl()
+        val URL_CAPTCHA_RESULT =
+            "https://captcha.chaoxing.com/captcha/check/verification/result?callback=cx_captcha_function".toHttpUrl()
+        val URL_CAPTCHA_IMAGE =
+            "https://captcha.chaoxing.com/captcha/get/verification/image".toHttpUrl()
+        val URL_SIGN_DETAIL =
+            "https://mobilelearn.chaoxing.com/newsign/signDetail".toHttpUrl()
+        val URL_SIGN =
+            "https://mobilelearn.chaoxing.com/pptSign/stuSignajax?&clientip=&appType=15&ifTiJiao=1&vpProbability=-1&vpStrategy=".toHttpUrl()
+        val URL_SIGN_NO_PARAMETER =
+            "https://mobilelearn.chaoxing.com/pptSign/stuSignajax".toHttpUrl()
+        private val SIGNED_STATUSES = setOf(1, 2, 3, 9)
+        private const val HTTP_CODE_FORBIDDEN = 403
+        private val PRIMARY_ATTEND_STATUS_PATTERN =
+            """"primaryAttend"\s*:\s*\{[^{}]*?"status"\s*:\s*(\d+)""".toRegex()
+        private val SIGN_STATUS_PATTERN = """signstatus\s*=\s*(\d+)""".toRegex()
+    }
+
+    private var storageSignInfo: JSONObject? = baseSignInfo
+
+    protected fun getPreSignUrl(): HttpUrl = URL_PERSIGN.newBuilder()
+        .addQueryParameter("courseId", courseId.toString())
+        .addQueryParameter("classId", classId.toString())
+        .addQueryParameter("activePrimaryId", activeId.toString())
+        .addQueryParameter("general", "1")
+        .addQueryParameter("sys", "1")
+        .addQueryParameter("ls", "1")
+        .addQueryParameter("appType", "15")
+        .addQueryParameter("uid", client.puid.toString())
+        .addQueryParameter("isTeacherViewOpen", "0")
+        .build()
+
+    var signEnc2: String? = null
+        protected set
+
+    class SignExpiredException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("签到已截止", throwable)
+
+    class SignAlreadyEndedException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("迟到或签到已结束", throwable)
+
+    class SignActivityNoPermissionException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("此用户不在班级", throwable)
+
+    class AlreadySignedException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("已经签到过了", throwable)
+
+    class PredictedAlreadySignedException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("重复签到", throwable)
+
+    class CaptchaTimeoutException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("获取验证码信息超时", throwable)
+
+    class CaptchaException(throwable: Throwable? = null) :
+        ChaoxingParseDataException("验证码获取失败", throwable)
+
+    class CaptchaCheckException(message: String, throwable: Throwable? = null) :
+        ChaoxingParseDataException("$message, 验证码校验失败", throwable)
+
+    class WrongPositionException(
+        distance: Float? = null,
+        throwable: Throwable? = null,
+        val isAlreadyDisabledRandomizedLocation: Boolean = false
+    ) :
+        ChaoxingParseDataException(
+            "位置不在设置范围内${if (distance != null) "，距离签到点${distance}米" else ""}",
+            throwable
+        )
+
+    protected open val notSignedPageMarkers: List<String> = emptyList()
+
+    private fun extractIntStatus(response: String, pattern: Regex): Int? =
+        pattern.find(response)?.groupValues?.getOrNull(1)?.toIntOrNull()
+
+    open suspend fun checkAlreadySign(response: String): Boolean {
+        val primaryStatus = extractIntStatus(response, PRIMARY_ATTEND_STATUS_PATTERN)
+            ?: extractIntStatus(response, SIGN_STATUS_PATTERN)
+        if (primaryStatus != null) {
+            Log.d("ChaoxingSigner", "Primary sign status: $primaryStatus")
+            return primaryStatus in SIGNED_STATUSES
+        }
+        if (notSignedPageMarkers.any { response.contains(it) }) {
+            Log.d("ChaoxingSigner", "Matched not signed page marker")
+        } else {
+            Log.d("ChaoxingSigner", "No sign status found, treat as not signed")
+        }
+        return false
+    }
+
+    open suspend fun checkExpiredSign(response: String): Boolean {
+        return response.contains("下次早点哦")
+    }
+
+    open suspend fun checkSignStatusThrowException(context: Context) {
+        when (preSign(context)) {
+            ChaoxingSignActivityStatus.EXPIRED -> throw SignExpiredException()
+            ChaoxingSignActivityStatus.ALREADY_SIGNED -> throw PredictedAlreadySignedException()
+            else -> {
+                if (ChaoxingCourseHelper.checkClassValid(client, classId) == false)
+                    throw SignActivityNoPermissionException()
+            }
+        }
+    }
+
+    open suspend fun getSignInfo(): JSONObject = withContext(Dispatchers.IO) {
+        storageSignInfo?.let { return@withContext it }
+        client.newCall(
+            Request.Builder().get().url(
+                URL_SIGN_INFO.newBuilder()
+                    .addQueryParameter("activeId", activeId.toString())
+                    .build()
+            ).build()
+        ).execute().use {
+            it.checkResponseThrowException()
+            return@withContext JSONObject.parseObject(it.body.string()).getJSONObject("data")
+                .apply {
+                    storageSignInfo = this
+                }
+        }
+    }
+
+    open suspend fun isCaptchaRequired(): Boolean {
+        return getSignInfo().getInteger("ifNeedVCode") == 1
+    }
+
+    open suspend fun isFaceRequired(): Boolean {
+        return getSignInfo().getInteger("openCheckFaceFlag") == 1
+    }
+
+    open suspend fun isPositionRequired(): Boolean {
+        return getSignInfo().getInteger("ifopenAddress") == 1
+    }
+
+    open suspend fun preSign(context: Context): ChaoxingSignActivityStatus =
+        withContext(Dispatchers.IO) {
+            val response = requestPreSign()
+            if (response.code == HTTP_CODE_FORBIDDEN) {
+                response.close()
+                if (!client.reLogin(context)) throw ChaoxingUserSessionOutdatedException()
+                val retried = requestPreSign()
+                if (retried.code == HTTP_CODE_FORBIDDEN) {
+                    retried.close()
+                    throw ChaoxingUserSessionOutdatedException()
+                }
+                handlePreSignResponse(retried)
+            } else handlePreSignResponse(response)
+        }
+
+    private fun requestPreSign(): Response = client.newCall(
+        Request.Builder().post(
+            FormBody.Builder().addEncoded("ext", extContent).build()
+        ).url(
+            getPreSignUrl()
+        ).build()
+    ).execute()
+
+    private suspend fun handlePreSignResponse(
+        response: Response
+    ): ChaoxingSignActivityStatus = response.use {
+        it.checkResponseThrowException()
+        val body = it.body.string()
+        if (it.code == 302 || body.contains("校验失败，未查询到活动数据")) {
+            throw SignActivityNoPermissionException()
+        }
+        postAnalysis()
+        return@use if (checkExpiredSign(body)) {
+            ChaoxingSignActivityStatus.EXPIRED
+        } else if (checkAlreadySign(body)) {
+            ChaoxingSignActivityStatus.ALREADY_SIGNED
+        } else {
+            ChaoxingSignActivityStatus.READY_TO_SIGN
+        }
+    }
+
+    open suspend fun postAnalysis() = withContext(Dispatchers.IO) {
+        client.newCall(
+            Request.Builder().get().url(
+                URL_ANALYSIS.newBuilder()
+                    .addQueryParameter("aid", activeId.toString()).build()
+            ).build()
+        ).execute().use {
+            it.checkResponseThrowException()
+            postAfterAnalysis(
+                """code='\+'([a-f0-9]+)'""".toRegex()
+                    .find(it.body.string())?.groupValues?.get(1)
+                    ?: throw Exception("Cannot find code")
+            )
+        }
+    }
+
+    open suspend fun postAfterAnalysis(code: String) = withContext(Dispatchers.IO) {
+        client.newCall(
+            Request.Builder().get().url(
+                URL_AFTER_ANALYSIS2.newBuilder()
+                    .addQueryParameter("code", code)
+                    .build()
+            ).build()
+        ).execute().close()
+    }
+
+
+    private fun HttpUrl.Builder.addLocationDataParameter(
+        position: ChaoxingLocationSignEntity,
+        parameterName: String,
+        isMockData: Boolean
+    ): HttpUrl.Builder {
+        addQueryParameter(
+            parameterName, JSONObject()
+                .fluentPut("result", 1)
+                .fluentPut(
+                    "latitude",
+                    "%.6f".format(Locale.US, position.randomizedLatitude).toDouble()
+                )
+                .fluentPut(
+                    "longitude",
+                    "%.6f".format(Locale.US, position.randomizedLongitude).toDouble()
+                )
+                .fluentPut("address", position.address)
+                .apply {
+                    if (isMockData) {
+                        fluentPut(
+                            "mockData",
+                            "{\"strategy\":0,\"probability\":-1}"
+                        )
+                    }
+                }
+                .toString()
+        )
+        return this
+    }
+
+    protected open fun HttpUrl.Builder.addLocationParameter(
+        position: ChaoxingLocationSignEntity?,
+        isMockData: Boolean
+    ): HttpUrl.Builder {
+        return addLocationDataParameter(position ?: return this, "location", isMockData)
+    }
+
+    protected open fun HttpUrl.Builder.addLocationResultParameter(
+        position: ChaoxingLocationSignEntity?
+    ): HttpUrl.Builder {
+        return addLocationDataParameter(position ?: return this, "locationResult", true)
+    }
+
+    protected open fun HttpUrl.Builder.addCourseIdParameter(): HttpUrl.Builder {
+        addQueryParameter("courseId", courseId.toString())
+        return this
+    }
+
+    protected open fun HttpUrl.Builder.addEnc2Parameter(enc2: String?): HttpUrl.Builder {
+        if (enc2 == null) return this
+        addQueryParameter("enc2", enc2)
+        return this
+    }
+
+    protected open fun HttpUrl.Builder.addValidateQueryParameter(
+        captchaValidate: String?
+    ): HttpUrl.Builder {
+        if (captchaValidate == null) return this
+        addQueryParameter("validate", captchaValidate)
+        return this
+    }
+
+    protected open suspend fun HttpUrl.Builder.addFaceRecognitionParameter(
+        faceImageObjectId: String?,
+        context: Context,
+        isCourseIdParameterAdded: Boolean = false
+    ): HttpUrl.Builder {
+        if (faceImageObjectId == null) return this
+        addQueryParameter("currentFaceId", faceImageObjectId)
+        addQueryParameter("ifCFP", "0")
+        if (!isCourseIdParameterAdded) addCourseIdParameter()
+        addQueryParameter(
+            "faceEnc",
+            ChaoxingFaceHelper.checkFaceResultAndGetEnc(
+                (client as? ChaoxingHttpClient) ?: client.toChaoxingHttpClient(context),
+                faceImageObjectId,
+                activeId
+            )
+        )
+        addQueryParameter("faceCode", "")
+        addQueryParameter("faceEncAid", "")
+        return this
+    }
+
+    protected open fun Response.checkSignResult(position: ChaoxingLocationSignEntity? = null): Boolean {
+        val result = body.string()
+        if (result.startsWith("[face]"))
+            throw ChaoxingFaceSignException(result.removePrefix("[face]"))
+        if (result == "success2")
+            throw SignAlreadyEndedException()
+        if (result == "签到失败，请重新扫描。")
+            throw QRCodeExpiredException()
+        if (result.startsWith("checkFace_")) {
+            signEnc2 = result.removePrefix("checkFace_").ifBlank { null }
+            throw ChaoxingParseDataException(result, data = result)
+        }
+        if (result.startsWith("errorLocation")) {
+            val isAlreadyDisabled = position?.isRandomizationTightened == true
+            position?.disableRandomizedLocation()
+            throw WrongPositionException(
+                result.split("_").getOrNull(1)?.toFloatOrNull(),
+                isAlreadyDisabledRandomizedLocation = isAlreadyDisabled
+            )
+        }
+        if (result == "您已签到过了") {
+            throw AlreadySignedException()
+        }
+        if (result.contains("同一设备不允许重复签到")) {
+            throw ChaoxingDeviceCodeDuplicatedSignException()
+        }
+        if (result.startsWith("validate")) {
+            signEnc2 = result.removePrefix("validate_").ifBlank { null }
+            return true
+        }
+        if (result != "success") {
+            throw ChaoxingParseDataException(result, data = result)
+        } else {
+            return false
+        }
+    }
+
+    open fun getCaptchaId(): String = "Qt9FIw9o4pwRjOyqM6yizZBh682qN2TU"
+
+    open suspend fun checkCaptchaResult(
+        xPosition: Float,
+        dataEntity: ChaoxingCaptchaDataEntity
+    ): String? = withContext(Dispatchers.IO) {
+        client.newCall(
+            Request.Builder().get().url(
+                URL_CAPTCHA_RESULT.newBuilder()
+                    .addQueryParameter("captchaId", dataEntity.captchaId)
+                    .addQueryParameter("type", dataEntity.type)
+                    .addQueryParameter("token", dataEntity.token)
+                    .addQueryParameter("textClickArr", "[{\"x\":${xPosition.toInt()}}]")
+                    .addQueryParameter("coordinate", "[]")
+                    .addQueryParameter("runEnv", "10")
+                    .addQueryParameter("version", dataEntity.version)
+                    .addQueryParameter("t", "a")
+                    .addQueryParameter("iv", dataEntity.iv)
+                    .addQueryParameter("_", System.currentTimeMillis().toString())
+                    .build()
+            ).header(
+                "Referer", getPreSignUrl().toString()
+            ).build()
+        ).execute().use {
+            it.checkResponseThrowException()
+            val jsonResult = JSONObject.parseObject(
+                it.body.string().replace("cx_captcha_function(", "").replace(")", "")
+            )
+            if (jsonResult.getInteger("error") == 1) {
+                throw CaptchaCheckException(jsonResult.getString("msg"))
+            }
+            if (jsonResult.getBoolean("result")) {
+                return@use JSONObject.parseObject(
+                    jsonResult.getString("extraData").replace("\\\"", "\"")
+                ).getString("validate")
+            } else {
+                return@use null
+            }
+        }
+    }
+
+    open suspend fun getCaptchaConf(): Long = withContext(Dispatchers.IO) {
+        client.newCall(
+            Request.Builder().get().url(
+                URL_CAPTCHA_CONF.newBuilder()
+                    .addQueryParameter("captchaId", getCaptchaId())
+                    .addQueryParameter("_", System.currentTimeMillis().toString()).build()
+            ).build()
+        ).execute().use {
+            it.checkResponseThrowException()
+            return@use JSONObject.parseObject(
+                it.body.string().replace("cx_captcha_function(", "").replace(")", "")
+            ).getLong("t")
+        }
+    }
+
+    @Suppress("Deprecation")
+    @Deprecated("Use getCaptchaImageV2 instead", ReplaceWith("getCaptchaImageV2()"))
+    open suspend fun getCaptchaImage(
+        context: Context,
+        onSuccess: (ChaoxingCaptchaDataEntity) -> Unit
+    ) {
+        getCaptchaData(context) {
+            client.newCall(
+                Request.Builder().get().url(it).header(
+                    "Referer", getPreSignUrl().toString()
+                ).build()
+            ).execute().use { response ->
+                val jsonResult = JSONObject.parseObject(
+                    response.body.string().replace("cx_captcha_function(", "").replace(")", "")
+                )
+                val params = it.toHttpUrl()
+                onSuccess(
+                    ChaoxingCaptchaDataEntity(
+                        params.queryParameter("captchaId") ?: getCaptchaId(),
+                        "slide",
+                        "1.1.20",
+                        jsonResult.getString("token"),
+                        params.queryParameter("captchaKey") ?: throw CaptchaException(),
+                        params.queryParameter("iv") ?: throw CaptchaException(),
+                        jsonResult.getJSONObject("imageVerificationVo").getString("shadeImage")
+                            ?: throw CaptchaException(),
+                        jsonResult.getJSONObject("imageVerificationVo").getString("cutoutImage")
+                            ?: throw CaptchaException()
+                    )
+                )
+            }
+        }
+    }
+
+    @Deprecated("Use getCaptchaImageV2 instead", ReplaceWith("getCaptchaImageV2()"))
+    @SuppressLint("SetJavaScriptEnabled")
+    open suspend fun getCaptchaData(
+        context: Context,
+        onSuccess: (String) -> Unit
+    ) {
+        getCaptchaConf()
+        var webview: WebView? = WebView(context).apply {
+            settings.javaScriptEnabled = true
+        }
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+            removeAllCookies(null)
+            client.okHttpClient.cookieJar.loadForRequest("https://chaoxing.com/get_cookies".toHttpUrl())
+                .forEach {
+                    setCookie(
+                        "chaoxing.com",
+                        "${it.name}=${it.value}; Path=/; Domain=chaoxing.com;"
+                    )
+                }
+            flush()
+        }
+
+        coroutineScope {
+            val job =
+                launch {
+                    webview?.webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(
+                            view: WebView?,
+                            request: WebResourceRequest?
+                        ): WebResourceResponse? {
+                            if (request?.url?.toString()
+                                    ?.contains("captcha.chaoxing.com/captcha/get/verification/image") == true
+                            ) {
+                                Log.d("ChaoxingSigner", "Captcha URL: ${request.url}")
+                                onSuccess(request.url?.toString()!!)
+                                cancel()
+                                return null
+                            }
+                            return super.shouldInterceptRequest(view, request)
+                        }
+                    }
+                    webview?.loadUrl(getPreSignUrl().toString())
+                }
+            job.invokeOnCompletion {
+                if (job.isCancelled)
+                    webview?.destroy()
+                webview = null
+            }
+            delay(10.seconds)
+            if (job.isActive) {
+                job.cancel()
+                webview?.destroy()
+                webview = null
+                throw CaptchaTimeoutException()
+            }
+        }
+    }
+
+    open suspend fun getCaptchaImageV2(): ChaoxingCaptchaDataEntity = withContext(Dispatchers.IO) {
+        val t = getCaptchaConf()
+        val type = "slide"
+        val captchaKey = UMengHelper.md5("$t${UUID.randomUUID()}")
+        val iv =
+            UMengHelper.md5("${getCaptchaId()}$type${System.currentTimeMillis()}${UUID.randomUUID()}")
+        val token = UMengHelper.md5("$t${getCaptchaId()}$type$captchaKey") + ":${t + 300000L}"
+        client.newCall(
+            Request.Builder().get().url(
+                URL_CAPTCHA_IMAGE.newBuilder()
+                    .addQueryParameter("callback", "cx_captcha_function")
+                    .addQueryParameter("captchaId", getCaptchaId())
+                    .addQueryParameter("type", "slide")
+                    .addQueryParameter("version", "1.1.20")
+                    .addQueryParameter("captchaKey", captchaKey)
+                    .addQueryParameter("token", token)
+                    .addQueryParameter(
+                        "referer", getPreSignUrl().toString()
+                    )
+                    .addQueryParameter("iv", iv)
+                    .addQueryParameter("_", System.currentTimeMillis().toString())
+                    .build()
+            ).build()
+        ).execute().use {
+            it.checkResponseThrowException()
+            val jsonResult = JSONObject.parseObject(
+                it.body.string().replace("cx_captcha_function(", "").replace(")", "")
+            )
+
+            return@use ChaoxingCaptchaDataEntity(
+                getCaptchaId(),
+                "slide",
+                "1.1.20",
+                jsonResult.getString("token"),
+                captchaKey,
+                iv,
+                jsonResult.getJSONObject("imageVerificationVo").getString("shadeImage")
+                    ?: throw CaptchaException(),
+                jsonResult.getJSONObject("imageVerificationVo").getString("cutoutImage")
+                    ?: throw CaptchaException()
+            )
+        }
+    }
+}

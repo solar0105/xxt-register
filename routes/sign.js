@@ -155,13 +155,10 @@ route('POST', '/api/autosign', async ({ body }) => {
   const db = store.get();
   db.autosign.enabled = !!body.enabled;
   store.save();
-  if (db.autosign.enabled) {
-    scheduler.start({ getSession });
-    log('ok', '自动签到已开启');
-  } else {
-    scheduler.stop();
-    log('warn', '自动签到已关闭');
-  }
+  // 调度器是全局的，服务启动时就已经在跑。
+  // 这里只翻转「本人」的开关，tick 会跳过没开的用户。
+  // 绝不能 stop()——那是全局的，会把别人的值守一起停掉。
+  log(db.autosign.enabled ? 'ok' : 'warn', db.autosign.enabled ? '自动签到已开启' : '自动签到已关闭');
   return { autosign: db.autosign, scheduler: scheduler.status() };
 });
 };

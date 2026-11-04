@@ -155,6 +155,11 @@ server.listen(PORT, HOST, () => {
   console.log(`   用户  ${store.listUsers().length} 个`);
   console.log('');
   writeAddressFile(PORT);
+
+  // 调度器必须在启动时就跑起来：之前只在「打开自动签到」那一刻 start，
+  // 服务一重启就永远不会恢复（界面上开关是开的，实际没有任何定时任务）。
+  scheduler.start({ getSession: () => sess.require() });
+  log('info', '定时值守调度已启动（全局常驻，按用户开关生效）');
 });
 
 process.on('SIGINT', () => {

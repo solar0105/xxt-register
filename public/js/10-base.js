@@ -16,6 +16,7 @@ const S = {
   mapMarker: null,
   mapContainer: null,
   datum: 'bd09',
+  placeId: null, // 当前选中的签到地点
   lastFix: null, // 上次定位成功的位置（GCJ-02），用来下次直接开在这里
   loginMode: 'pwd', // 'pwd' | 'qr'
   qrImage: null,

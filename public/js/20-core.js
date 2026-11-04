@@ -1,6 +1,13 @@
 /* 核心：刷新 + 渲染入口 */
 // ---------------------------------------------------------------- 主渲染
 
+/** 当前用哪个地点签到：优先用户选的，否则第一个 */
+function currentPlaceId() {
+  const places = (S.state && S.state.places) || [];
+  if (!places.length) return null;
+  return places.some((p) => p.id === S.placeId) ? S.placeId : places[0].id;
+}
+
 async function refresh() {
   S.state = await api('/api/state');
   render();
